@@ -1,0 +1,8 @@
+.env
+uploads
+__pycache__
+/data_as_txt
+/venv
+METADATA_EXAMPLE.md
+readme.md
+README_ISLAMIC_RAG.md

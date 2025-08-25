@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+streamlit
+requests
+python-docx
+PyMuPDF
+pydantic
+langchain
+langchain-community
+langchain-openai
+langchain-core
+openai
+python-dotenv
+python-multipart
+pinecone
+langdetect
