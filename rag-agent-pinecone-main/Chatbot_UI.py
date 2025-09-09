@@ -35,7 +35,7 @@ def get_pinecone_index():
 
 # Page config
 st.set_page_config(
-    page_title="Islamic Knowledge RAG Chatbot",
+    page_title="Noorbakshia365 AI Bot",
     page_icon="🕌",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -45,35 +45,61 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    :root {
+        --bg: #0b1410; /* deep green-black */
+        --bg-soft: #0f1d17;
+        --card: #0f2018;
+        --text: #e6fff2;
+        --text-soft: #bfe8d3;
+        --accent: #21c38a; /* emerald */
+        --accent-strong: #16a374;
+        --border: #1e3d30;
+        --shadow: rgba(33, 195, 138, 0.12);
+    }
+    @media (prefers-color-scheme: light) {
+        :root {
+            --bg: #f8fffb;
+            --bg-soft: #eefaf3;
+            --card: #ffffff;
+            --text: #0d1b16;
+            --text-soft: #174a39;
+            --accent: #16a374;
+            --accent-strong: #0e7a57;
+            --border: #cfe9dc;
+            --shadow: rgba(14, 122, 87, 0.12);
+        }
+    }
     
     .stApp {
         font-family: 'Inter', sans-serif;
-        background-color: #ffffff;
+        background: var(--bg);
+        color: var(--text);
     }
     
     .main-header {
         text-align: center;
-        font-size: 2.5rem;
-        font-weight: 700;
+        font-size: 2.6rem;
+        font-weight: 800;
+        letter-spacing: 0.2px;
         margin-bottom: 0.5rem;
-        color: #1f2937;
+        color: var(--text);
     }
     
     .sub-header {
         text-align: center;
-        color: #374151;
-        font-size: 1.1rem;
+        color: var(--text-soft);
+        font-size: 1.05rem;
         font-weight: 400;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
     }
     
     .topic-selector {
-        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        background: var(--card);
         border-radius: 16px;
-        padding: 24px;
-        margin: 24px 0;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+        padding: 20px;
+        margin: 18px 0;
+        border: 1px solid var(--border);
+        box-shadow: 0 6px 22px var(--shadow);
     }
     
     .topic-header {
@@ -87,85 +113,90 @@ st.markdown("""
     }
     
     .chat-container {
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 24px;
+        background: var(--card);
+        border-radius: 14px;
+        padding: 22px;
         margin: 20px 0;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        border: 1px solid var(--border);
+        box-shadow: 0 10px 26px var(--shadow);
+        color: var(--text);
     }
     
     /* Main page question input */
     .stTextInput > div > div > input {
-        background: #ffffff !important;
-        border: 2px solid #d1d5db !important;
-        border-radius: 8px !important;
+        background: var(--bg) !important;
+        border: 2px solid var(--border) !important;
+        border-radius: 10px !important;
         padding: 12px 16px !important;
         font-size: 1.1rem !important;
-        color: #111827 !important;
+        color: var(--text) !important;
         font-weight: 500 !important;
     }
     
     .stTextInput > div > div > input:focus {
-        border-color: #dc2626 !important;
-        box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px rgba(33, 195, 138, 0.20) !important;
     }
     
     .stButton > button {
-        background: #dc2626 !important;
-        color: white !important;
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%) !important;
+        color: #ffffff !important;
         border: none !important;
         padding: 12px 24px !important;
-        border-radius: 8px !important;
+        border-radius: 10px !important;
         font-size: 1rem !important;
-        font-weight: 600 !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.2px;
         transition: all 0.2s ease !important;
         width: 100% !important;
         margin-top: 12px !important;
+        box-shadow: 0 10px 24px var(--shadow) !important;
     }
     
     .stButton > button:hover {
-        background: #b91c1c !important;
+        filter: brightness(0.95);
         transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
+        box-shadow: 0 10px 28px var(--shadow) !important;
     }
     
     .answer-container {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border: 1px solid #bae6fd;
+        background: linear-gradient(135deg, rgba(33, 195, 138, 0.08) 0%, rgba(14, 122, 87, 0.08) 100%);
+        border: 1px solid var(--border);
         border-radius: 16px;
         padding: 24px;
         margin: 20px 0;
-        box-shadow: 0 4px 16px rgba(14, 165, 233, 0.1);
+        color: var(--text);
+        box-shadow: 0 6px 22px var(--shadow);
     }
     
     .topic-info {
-        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-        border: 1px solid #fbbf24;
+        background: linear-gradient(135deg, rgba(33,195,138,0.14) 0%, rgba(14,122,87,0.14) 100%);
+        border: 1px solid var(--border);
         border-radius: 12px;
-        padding: 16px;
+        padding: 14px;
         margin: 12px 0;
-        font-size: 0.9rem;
-        font-weight: 500;
-        color: #92400e;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text);
     }
     
     /* Sidebar styling */
-    .css-1d391kg {
-        background-color: #f8fafc !important;
-    }
+    .css-1d391kg { background: var(--bg-soft) !important; }
+    [data-testid="stSidebar"] { background: var(--bg-soft) !important; border-right: 1px solid var(--border) !important; }
+    [data-testid="stSidebar"] * { color: var(--text) !important; font-size: 1.05rem !important; }
+    .stMarkdown, .stText, .stCaption, .stHeader { color: var(--text) !important; }
     
     .stSelectbox > div > div {
-        background: #ffffff !important;
-        border: 2px solid #d1d5db !important;
-        border-radius: 8px !important;
+        background: var(--bg) !important;
+        border: 2px solid var(--border) !important;
+        border-radius: 10px !important;
         font-size: 1rem !important;
-        color: #111827 !important;
+        color: var(--text) !important;
     }
     
     .stSelectbox > div > div:focus-within {
-        border-color: #dc2626 !important;
-        box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px rgba(33, 195, 138, 0.20) !important;
     }
     
     .stTextInput > div > div > input {
@@ -181,39 +212,13 @@ st.markdown("""
         box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
     }
     
-    .knowledge-category {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 0;
-        color: #475569;
-        font-size: 0.9rem;
-    }
+    .knowledge-category { color: var(--text-soft); }
     
-    .connection-success {
-        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-        border: 1px solid #10b981;
-        border-radius: 12px;
-        padding: 16px;
-        color: #065f46;
-        font-weight: 500;
-    }
+    .connection-success { color: var(--text); border: 1px solid var(--border); }
     
-    .connection-error {
-        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-        border: 1px solid #ef4444;
-        border-radius: 12px;
-        padding: 16px;
-        color: #991b1b;
-        font-weight: 500;
-    }
+    .connection-error { color: #ffdcdc; border: 1px solid #7a1c1c; }
     
-    .stSelectbox > div > div {
-        background: #ffffff;
-        border: 2px solid #e2e8f0;
-        border-radius: 12px;
-        font-size: 1rem;
-    }
+    .stSelectbox > div > div { background: var(--bg); border: 2px solid var(--border); border-radius: 12px; }
     
     .stSelectbox > div > div:focus-within {
         border-color: #667eea;
@@ -229,10 +234,7 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
     
-    .clear-chat-btn {
-        background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
-        margin-top: 24px !important;
-    }
+    .clear-chat-btn { background: linear-gradient(135deg, #1a3b2d 0%, #153026 100%) !important; margin-top: 24px !important; }
     
     .clear-chat-btn:hover {
         background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
@@ -312,22 +314,11 @@ if not st.session_state['topics_loaded']:
     st.session_state['topics_loaded'] = True
 
 # App title and description
-st.markdown('<h1 class="main-header">🕌 Islamic Knowledge RAG Chatbot</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Ask questions about Islamic knowledge in Arabic, Urdu, or English</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">🕌 Noorbakshia365 AI Bot</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Ask questions about Islamic knowledge (Arabic • Urdu • English)</p>', unsafe_allow_html=True)
 
-# Clean Sidebar - Only Base URL and Topic Selection
+# Clean Sidebar - Only Topic Selection
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    
-    # API URL configuration
-    api_url = st.text_input(
-        "🌐 API Base URL",
-        value=API_BASE_URL,
-        help="URL of your RAG API server"
-    )
-    
-    st.markdown("---")
-    
     st.header("📂 Select Topic")
     
     # Ensure we always have topics (use defaults if needed)
@@ -365,12 +356,7 @@ with st.sidebar:
     # Hidden debug mode (can be enabled if needed)
     debug_mode = False
 
-# Show current selected topic on main page
-selected_topic_data = next((t for t in st.session_state['available_topics'] if t['folder_name'] == st.session_state['selected_topic']), None)
-if selected_topic_data:
-    st.info(f"🎯 **Current Topic**: {selected_topic_data['display_name']}")
-
-st.markdown("---")
+# Main page simplified: only heading and Q/A
 
 # Main chat interface
 st.markdown('<div class="chat-container">', unsafe_allow_html=True)
@@ -437,7 +423,7 @@ if st.button("🚀 Ask AI Assistant", type="primary"):
             except Exception as direct_err:
                 if not API_BASE_URL:
                     raise
-                endpoint = f"{api_url}/ask/"
+                endpoint = f"{API_BASE_URL}/ask/"
                 payload = {
                     "question": question_input,
                     "topic_folder": st.session_state['selected_topic'] if st.session_state['selected_topic'] != 'all' else None
@@ -467,15 +453,15 @@ if st.button("🗑️ Clear Chat", key="clear_chat", help="Clear all chat messag
 st.markdown("""
 <style>
     div[data-testid="stButton"] button[kind="secondary"] {
-        background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
+        background: linear-gradient(135deg, #1a3b2d 0%, #153026 100%) !important;
         color: white !important;
         border: none !important;
         margin-top: 24px !important;
     }
     
     div[data-testid="stButton"] button[kind="secondary"]:hover {
-        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
-        box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4) !important;
+        filter: brightness(0.95);
+        box-shadow: 0 8px 24px var(--shadow) !important;
         transform: translateY(-2px) !important;
     }
 </style>
