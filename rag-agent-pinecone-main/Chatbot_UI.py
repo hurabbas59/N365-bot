@@ -2,6 +2,36 @@ import streamlit as st
 import requests
 import time
 import os
+import asyncio
+
+# Backend-free mode: call retrieval and LLM directly
+from topic_based_chatbot import process_question_with_topic
+from topic_based_retriever import get_available_topics_from_index
+
+# Pinecone client (support both new and legacy)
+def _get_secret(name: str, default: str = "") -> str:
+    try:
+        return st.secrets[name]  # type: ignore[index]
+    except Exception:
+        return os.getenv(name, default)
+
+@st.cache_resource(show_spinner=False)
+def get_pinecone_index():
+    """Create and cache Pinecone index client for direct use in Streamlit Cloud."""
+    api_key = _get_secret("PINECONE_API_KEY")
+    index_name = _get_secret("PINECONE_INDEX_NAME", "islamic-knowledge-topics-v2")
+    if not api_key:
+        raise RuntimeError("PINECONE_API_KEY is not set in Streamlit secrets or environment")
+    try:
+        # New SDK style
+        from pinecone import Pinecone
+        pc = Pinecone(api_key=api_key)
+        return pc.Index(index_name)
+    except Exception:
+        # Legacy SDK fallback
+        import pinecone
+        pinecone.init(api_key=api_key, environment=os.getenv("PINECONE_ENVIRONMENT", "us-east-1-aws"))
+        return pinecone.Index(index_name)
 
 # Page config
 st.set_page_config(
@@ -222,18 +252,16 @@ if 'topics_loaded' not in st.session_state:
     st.session_state['topics_loaded'] = False
 
 # Configuration
-# Robustly read API_BASE_URL: env var first, then Streamlit secrets, else local default
-def _get_api_base_url() -> str:
-    env_url = os.getenv("API_BASE_URL")
-    if env_url:
-        return env_url
-    try:
-        # Accessing st.secrets may raise if no secrets.toml exists in local runs
-        return st.secrets["API_BASE_URL"]  # type: ignore[index]
-    except Exception:
-        return "http://localhost:8002"
+# API_BASE_URL is optional now (only used if you prefer hitting the FastAPI backend).
+API_BASE_URL = _get_secret("API_BASE_URL", "")
 
-API_BASE_URL = _get_api_base_url()
+@st.cache_data(show_spinner=False)
+def load_topics_direct(pinecone_index):
+    try:
+        topics = get_available_topics_from_index(pinecone_index)
+        return topics, True
+    except Exception:
+        return DEFAULT_TOPICS, False
 
 # Default topics as fallback (using original names)
 DEFAULT_TOPICS = [
@@ -269,9 +297,17 @@ def load_topics_from_api(api_url):
         # Silently fall back to default topics on connection error
         return DEFAULT_TOPICS, False
 
-# Auto-load topics on first run (but don't show messages on main page)
+# Auto-load topics (prefer direct Pinecone; fallback to API if provided)
 if not st.session_state['topics_loaded']:
-    topics, loaded_from_api = load_topics_from_api(API_BASE_URL)
+    topics = []
+    loaded = False
+    try:
+        pinecone_index = get_pinecone_index()
+        topics, loaded = load_topics_direct(pinecone_index)
+    except Exception:
+        pass
+    if (not loaded) and API_BASE_URL:
+        topics, loaded = load_topics_from_api(API_BASE_URL)
     st.session_state['available_topics'] = topics
     st.session_state['topics_loaded'] = True
 
@@ -373,58 +409,49 @@ if st.button("🚀 Ask AI Assistant", type="primary"):
     # Add user message to chat
     st.session_state['messages'].append({'role': 'user', 'content': question_input})
     st.chat_message('user').write(question_input)
-    
-    # Get answer from API
+    # Get answer via direct backend-free call (preferred), fallback to API if configured
     with st.spinner("🤔 AI Assistant is thinking..."):
         try:
-            endpoint = f"{api_url}/ask/"
-            payload = {
-                "question": question_input,
-                "topic_folder": st.session_state['selected_topic'] if st.session_state['selected_topic'] != 'all' else None
-            }
-            
-            if debug_mode:
-                st.info(f"🌐 **API Endpoint:** {endpoint}")
-                st.info(f"📤 **Request Payload:** {payload}")
-            
-            response = requests.post(
-                endpoint,
-                json=payload,
-                timeout=60
-            )
-            
-            if response.ok:
+            try:
+                pinecone_index = get_pinecone_index()
+                result = asyncio.run(process_question_with_topic(
+                    pinecone_index,
+                    question_input,
+                    st.session_state['selected_topic'] if st.session_state['selected_topic'] != 'all' else None
+                ))
+                answer = result.get("answer", "")
+                topic_name = result.get("topic_name")
+                metadata = result.get("metadata", {})
+                topic_info = {
+                    'topic_name': topic_name,
+                    'topic_folder': st.session_state['selected_topic'],
+                    'selected_topic': st.session_state['selected_topic']
+                }
+                st.session_state['messages'].append({
+                    'role': 'assistant',
+                    'content': answer,
+                    'translations': metadata.get("translations", ""),
+                    'topic_info': topic_info
+                })
+                st.chat_message('assistant').write(answer)
+            except Exception as direct_err:
+                if not API_BASE_URL:
+                    raise
+                endpoint = f"{api_url}/ask/"
+                payload = {
+                    "question": question_input,
+                    "topic_folder": st.session_state['selected_topic'] if st.session_state['selected_topic'] != 'all' else None
+                }
+                response = requests.post(endpoint, json=payload, timeout=60)
                 data = response.json()
                 answer = data.get("answer", "")
-                metadata = data.get("metadata", {})
-                
-                # Add assistant message to chat with topic info
                 topic_info = {
                     'topic_name': data.get('topic_name'),
                     'topic_folder': data.get('topic_folder'),
                     'selected_topic': st.session_state['selected_topic']
                 }
-                
-                st.session_state['messages'].append({
-                    'role': 'assistant', 
-                    'content': answer,
-                    'translations': metadata.get("translations", ""),
-                    'topic_info': topic_info
-                })
-                
-                # Display answer
+                st.session_state['messages'].append({'role': 'assistant','content': answer,'translations': data.get("metadata", {}).get("translations", ""),'topic_info': topic_info})
                 st.chat_message('assistant').write(answer)
-                
-                # Display metadata in debug mode
-                if debug_mode:
-                    st.markdown("---")
-                    st.markdown("### 🔍 API Response Details")
-                    st.json(data)
-                
-            else:
-                error_msg = f"Error {response.status_code}: {response.text}"
-                st.error(error_msg)
-                st.session_state['messages'].append({'role': 'assistant', 'content': error_msg})
                 
         except Exception as e:
             error_msg = f"Connection error: {e}"
