@@ -3,10 +3,13 @@ from typing import Any, Dict, Optional
 
 class AskRequest(BaseModel):
     question: str
+    topic_folder: Optional[str] = None
 
 class AskResponse(BaseModel):
     question: str
     answer: str
+    topic_folder: Optional[str] = None
+    topic_name: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
 class SearchRequest(BaseModel):
@@ -43,3 +46,12 @@ class HealthCheck(BaseModel):
     status: str
     timestamp: float
     pinecone_connection: str
+
+class TopicInfo(BaseModel):
+    folder_name: str
+    display_name: str
+    description: str
+
+class TopicsResponse(BaseModel):
+    topics: list[TopicInfo]
+    total_topics: int

@@ -4,7 +4,15 @@ from typing import List, Any, Dict, Optional
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain.docstore.document import Document
-from pinecone import Pinecone, ServerlessSpec
+try:
+    from pinecone import Pinecone, ServerlessSpec
+except ImportError:
+    try:
+        import pinecone
+        Pinecone = pinecone.Pinecone
+        ServerlessSpec = pinecone.ServerlessSpec
+    except ImportError:
+        raise ImportError("Could not import Pinecone. Please install with: pip install pinecone-client")
 import concurrent.futures
 from data_loader import IslamicKnowledgeDataLoader
 import re
@@ -14,8 +22,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-class EnhancedIslamicEmbeddingCreator:
-    """Enhanced embedding creator specifically for Islamic knowledge dataset."""
+class TopicBasedIslamicEmbeddingCreator:
+    """Topic-based embedding creator for Islamic knowledge dataset with filtering capability."""
     
     def __init__(self):
         # Load environment variables first
@@ -40,22 +48,92 @@ class EnhancedIslamicEmbeddingCreator:
         
         # Optimized chunking parameters for Islamic content
         self.chunk_size = 800  # Smaller chunks for better precision
-        self.chunk_overlap = 150  # Good overlap for context continuity
+        self.chunk_overlap = 100  # Good overlap for context continuity
         self.max_chunks_per_batch = 50  # Smaller batches for better memory management
         
-        # Pinecone configuration
+        # Pinecone configuration - NEW INDEX NAME
         self.pinecone = Pinecone(api_key=self.pinecone_api_key)
-        self.index_name = os.getenv("PINECONE_INDEX_NAME", "islamic-knowledge-index")
+        self.index_name = "islamic-knowledge-topics-v2"  # New index name
         
-        print(f"[EnhancedEmbeddingCreator] Initialized with:")
+        print(f"[TopicBasedEmbeddingCreator] Initialized with:")
         print(f"  - OpenAI Model: {self.embedding_model}")
         print(f"  - Pinecone Index: {self.index_name}")
         print(f"  - Chunk Size: {self.chunk_size}")
         print(f"  - Chunk Overlap: {self.chunk_overlap}")
     
+    def clean_topic_name(self, folder_name: str) -> str:
+        """Keep original folder names as topic names, just remove number prefix and replace underscores."""
+        # Remove number prefix (e.g., "03_" -> "")
+        cleaned = re.sub(r'^\d+_', '', folder_name)
+        
+        # Replace underscores with spaces
+        cleaned = cleaned.replace('_', ' ')
+        
+        # Keep the original names as they are
+        return cleaned
+    
+    def generate_source_url(self, file_path: str, topic_name: str) -> str:
+        """Generate a source URL for answer attribution."""
+        # Clean the file path
+        filename = os.path.basename(file_path)
+        directory = os.path.dirname(file_path)
+        
+        # Extract topic folder
+        path_parts = directory.split(os.sep)
+        topic_folder = None
+        for part in path_parts:
+            if re.match(r'^\d+_', part):  # Find numbered folder
+                topic_folder = part
+                break
+        
+        if not topic_folder:
+            topic_folder = "general"
+        
+        # Create a clean URL-like path
+        base_url = "islamic-knowledge"
+        clean_topic = topic_folder.lower().replace('_', '-')
+        clean_filename = filename.replace('.txt', '').replace('_', '-').lower()
+        
+        source_url = f"{base_url}/{clean_topic}/{clean_filename}"
+        return source_url
+    
+    def extract_enhanced_metadata(self, filepath: str, existing_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract enhanced metadata including topic_name and source_url."""
+        # Get the directory path to determine topic
+        directory = os.path.dirname(filepath)
+        path_parts = directory.split(os.sep)
+        
+        # Find the main topic folder (numbered folder)
+        topic_folder = None
+        for part in path_parts:
+            if re.match(r'^\d+_', part):  # Find numbered folder like "03_Hadith_Mawdat_ul_Qurba"
+                topic_folder = part
+                break
+        
+        if not topic_folder:
+            topic_folder = "18_Additional_Content"  # Default
+        
+        # Clean topic name for user display
+        topic_name = self.clean_topic_name(topic_folder)
+        
+        # Generate source URL
+        source_url = self.generate_source_url(filepath, topic_name)
+        
+        # Add new metadata fields to existing metadata
+        enhanced_metadata = existing_metadata.copy()
+        enhanced_metadata.update({
+            "topic_folder": topic_folder,  # Original folder name for filtering
+            "topic_name": topic_name,      # Clean name for display
+            "source_url": source_url,      # Attribution URL
+            "index_version": "v2",         # Track index version
+            "supports_topic_filtering": True
+        })
+        
+        return enhanced_metadata
+    
     def create_index_from_data_directory(self, data_directory: str = "data_as_txt", progress_cb = None) -> Any:
-        """Create Pinecone index from the data directory."""
-        print(f"[EnhancedEmbeddingCreator] Starting index creation from {data_directory}")
+        """Create new topic-based Pinecone index from the data directory."""
+        print(f"[TopicBasedEmbeddingCreator] Starting topic-based index creation from {data_directory}")
         start_time = time.time()
         
         # Initialize data loader
@@ -63,13 +141,13 @@ class EnhancedIslamicEmbeddingCreator:
         
         # Get dataset statistics
         stats = data_loader.get_dataset_stats()
-        print(f"[EnhancedEmbeddingCreator] Dataset: {stats['total_files']} files, {stats['total_size_mb']} MB")
+        print(f"[TopicBasedEmbeddingCreator] Dataset: {stats['total_files']} files, {stats['total_size_mb']} MB")
         
         if progress_cb:
             progress_cb(5)
         
         # Load all documents
-        print("[EnhancedEmbeddingCreator] Loading documents...")
+        print("[TopicBasedEmbeddingCreator] Loading documents...")
         documents = data_loader.create_documents()
         
         if not documents:
@@ -78,31 +156,114 @@ class EnhancedIslamicEmbeddingCreator:
         if progress_cb:
             progress_cb(15)
         
+        # Enhance metadata with topic information
+        print("[TopicBasedEmbeddingCreator] Enhancing metadata with topic information...")
+        for doc in documents:
+            doc.metadata = self.extract_enhanced_metadata(doc.metadata['file_path'], doc.metadata)
+        
+        if progress_cb:
+            progress_cb(20)
+        
         # Create chunks with enhanced splitting
-        print("[EnhancedEmbeddingCreator] Creating chunks...")
+        print("[TopicBasedEmbeddingCreator] Creating chunks...")
         chunks = self._create_enhanced_chunks(documents)
         
-        print(f"[EnhancedEmbeddingCreator] Created {len(chunks)} chunks")
+        print(f"[TopicBasedEmbeddingCreator] Created {len(chunks)} chunks")
         if progress_cb:
-            progress_cb(25)
+            progress_cb(30)
         
-        # Create or recreate Pinecone index
-        print("[EnhancedEmbeddingCreator] Setting up Pinecone index...")
-        index = self._setup_pinecone_index()
+        # Get topic statistics
+        topic_stats = self._get_topic_statistics(chunks)
+        print(f"[TopicBasedEmbeddingCreator] Topic distribution:")
+        for topic, count in topic_stats.items():
+            print(f"  - {topic}: {count} chunks")
         
         if progress_cb:
             progress_cb(35)
         
+        # Create or recreate Pinecone index
+        print("[TopicBasedEmbeddingCreator] Setting up Pinecone index...")
+        index = self._setup_pinecone_index()
+        
+        if progress_cb:
+            progress_cb(40)
+        
         # Process chunks in batches
-        print("[EnhancedEmbeddingCreator] Processing chunks...")
+        print("[TopicBasedEmbeddingCreator] Processing chunks...")
         self._process_chunks_in_batches(chunks, progress_cb)
         
         total_time = time.time() - start_time
-        print(f"[EnhancedEmbeddingCreator] Index creation completed in {total_time:.2f} seconds")
+        print(f"[TopicBasedEmbeddingCreator] Topic-based index creation completed in {total_time:.2f} seconds")
         
         if progress_cb:
             progress_cb(100)
         
+        return index
+    
+    def _get_topic_statistics(self, chunks: List[Document]) -> Dict[str, int]:
+        """Get statistics about topic distribution in chunks."""
+        topic_counts = {}
+        for chunk in chunks:
+            topic_name = chunk.metadata.get('topic_name', 'Unknown')
+            topic_counts[topic_name] = topic_counts.get(topic_name, 0) + 1
+        return dict(sorted(topic_counts.items()))
+    
+    def get_available_topics(self, data_directory: str = "data_as_txt") -> List[Dict[str, str]]:
+        """Get list of available topics for frontend dropdown."""
+        topics = []
+        
+        # Add "All Topics" option first
+        topics.append({
+            "folder_name": "all",
+            "display_name": "All Topics",
+            "description": "Search across all Islamic knowledge categories"
+        })
+        
+        # Walk through data directory to find topic folders
+        for item in os.listdir(data_directory):
+            item_path = os.path.join(data_directory, item)
+            if os.path.isdir(item_path) and re.match(r'^\d+_', item):
+                topics.append({
+                    "folder_name": item,
+                    "display_name": self.clean_topic_name(item),
+                    "description": f"Content from {self.clean_topic_name(item)}"
+                })
+        
+        return topics
+    
+    def add_new_data_to_index(self, new_data_directory: str, progress_cb = None) -> Any:
+        """Add new data to existing index without recreating everything."""
+        print(f"[TopicBasedEmbeddingCreator] Adding new data from {new_data_directory}")
+        
+        # Check if index exists
+        if not self.pinecone.has_index(self.index_name):
+            raise ValueError(f"Index {self.index_name} does not exist. Create it first using create_index_from_data_directory()")
+        
+        # Load new documents
+        data_loader = IslamicKnowledgeDataLoader(new_data_directory)
+        new_documents = data_loader.create_documents()
+        
+        if not new_documents:
+            print("No new documents found to add")
+            return self.pinecone.Index(self.index_name)
+        
+        # Enhance metadata
+        for doc in new_documents:
+            doc.metadata = self.extract_enhanced_metadata(doc.metadata['file_path'], doc.metadata)
+        
+        # Create chunks
+        new_chunks = self._create_enhanced_chunks(new_documents)
+        print(f"[TopicBasedEmbeddingCreator] Created {len(new_chunks)} new chunks")
+        
+        # Get current index stats to determine starting ID
+        index = self.pinecone.Index(self.index_name)
+        stats = index.describe_index_stats()
+        current_count = stats.total_vector_count
+        
+        # Process new chunks starting from current count
+        self._process_chunks_in_batches(new_chunks, progress_cb, starting_id=current_count)
+        
+        print(f"[TopicBasedEmbeddingCreator] Successfully added {len(new_chunks)} new chunks to index")
         return index
     
     def _create_enhanced_chunks(self, documents: List[Document]) -> List[Document]:
@@ -205,17 +366,17 @@ class EnhancedIslamicEmbeddingCreator:
         """Setup Pinecone index with optimal configuration."""
         # Delete existing index if it exists
         if self.pinecone.has_index(self.index_name):
-            print(f"[EnhancedEmbeddingCreator] Deleting existing index: {self.index_name}")
+            print(f"[TopicBasedEmbeddingCreator] Deleting existing index: {self.index_name}")
             self.pinecone.delete_index(self.index_name)
         
         # Create new index
-        print(f"[EnhancedEmbeddingCreator] Creating new index: {self.index_name}")
+        print(f"[TopicBasedEmbeddingCreator] Creating new index: {self.index_name}")
         
         # Get Pinecone configuration with defaults
         cloud = os.getenv("PINECONE_CLOUD", "aws")
         region = os.getenv("PINECONE_REGION", "us-east-1")
         
-        print(f"[EnhancedEmbeddingCreator] Using cloud: {cloud}, region: {region}")
+        print(f"[TopicBasedEmbeddingCreator] Using cloud: {cloud}, region: {region}")
         
         self.pinecone.create_index(
             name=self.index_name,
@@ -225,12 +386,12 @@ class EnhancedIslamicEmbeddingCreator:
         )
         
         # Wait for index to be ready
-        print("[EnhancedEmbeddingCreator] Waiting for index to be ready...")
+        print("[TopicBasedEmbeddingCreator] Waiting for index to be ready...")
         time.sleep(10)
         
         return self.pinecone.Index(self.index_name)
     
-    def _process_chunks_in_batches(self, chunks: List[Document], progress_cb = None) -> None:
+    def _process_chunks_in_batches(self, chunks: List[Document], progress_cb = None, starting_id: int = 0) -> None:
         """Process chunks in batches for better memory management."""
         total_chunks = len(chunks)
         processed = 0
@@ -238,10 +399,10 @@ class EnhancedIslamicEmbeddingCreator:
         # Process in smaller batches
         for i in range(0, total_chunks, self.max_chunks_per_batch):
             batch = chunks[i:i + self.max_chunks_per_batch]
-            batch_start = i
-            batch_end = min(i + self.max_chunks_per_batch, total_chunks)
+            batch_start = i + starting_id
+            batch_end = min(i + self.max_chunks_per_batch, total_chunks) + starting_id
             
-            print(f"[EnhancedEmbeddingCreator] Processing batch {batch_start+1}-{batch_end} of {total_chunks}")
+            print(f"[TopicBasedEmbeddingCreator] Processing batch {batch_start+1}-{batch_end} of {total_chunks + starting_id}")
             
             try:
                 self._process_batch(batch, batch_start)
@@ -249,16 +410,16 @@ class EnhancedIslamicEmbeddingCreator:
                 
                 # Update progress
                 if progress_cb:
-                    progress_pct = 35 + int(60 * processed / total_chunks)
+                    progress_pct = 40 + int(55 * processed / total_chunks)
                     progress_cb(progress_pct)
                 
-                print(f"[EnhancedEmbeddingCreator] Processed {processed}/{total_chunks} chunks")
+                print(f"[TopicBasedEmbeddingCreator] Processed {processed}/{total_chunks} chunks")
                 
                 # Small delay to avoid rate limiting
                 time.sleep(1)
                 
             except Exception as e:
-                print(f"[EnhancedEmbeddingCreator] Error processing batch {batch_start+1}-{batch_end}: {e}")
+                print(f"[TopicBasedEmbeddingCreator] Error processing batch {batch_start+1}-{batch_end}: {e}")
                 continue
     
     def _flatten_metadata_for_pinecone(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -309,7 +470,7 @@ class EnhancedIslamicEmbeddingCreator:
             flattened_meta = self._flatten_metadata_for_pinecone(meta)
             
             record = {
-                "id": f"chunk-{batch_start + j}",
+                "id": f"topic-chunk-{batch_start + j}",
                 "values": embedding,
                 "metadata": {
                     **flattened_meta,
@@ -323,126 +484,78 @@ class EnhancedIslamicEmbeddingCreator:
         index = self.pinecone.Index(self.index_name)
         index.upsert(vectors=records)
         
-        print(f"[EnhancedEmbeddingCreator] Upserted {len(records)} chunks to Pinecone")
+        print(f"[TopicBasedEmbeddingCreator] Upserted {len(records)} chunks to Pinecone")
 
-    def _restore_rich_metadata(self, flattened_meta: Dict[str, Any]) -> Dict[str, Any]:
-        """Restore rich metadata structure from flattened Pinecone metadata."""
-        restored = {}
-        
-        # Extract basic metadata
-        for key, value in flattened_meta.items():
-            if key in ['text', 'embedding_model', 'chunk_index', 'total_chunks', 'chunk_size', 'chunk_type']:
-                restored[key] = value
-            elif key.startswith('mobile_navigation_'):
-                # Reconstruct mobile_navigation object
-                if 'mobile_navigation' not in restored:
-                    restored['mobile_navigation'] = {}
-                nested_key = key.replace('mobile_navigation_', '')
-                restored['mobile_navigation'][nested_key] = value
-            elif key.startswith('related_content_'):
-                # Reconstruct related_content object
-                if 'related_content' not in restored:
-                    restored['related_content'] = {}
-                nested_key = key.replace('related_content_', '')
-                restored['related_content'][nested_key] = value
-            else:
-                restored[key] = value
-        
-        return restored
-
-    def test_query_with_metadata_restoration(self, index, query: str, top_k: int = 3):
-        """Test query with metadata restoration."""
-        print(f"\n🧪 Testing query: {query}")
+    def test_topic_filtering(self, index, topic_folder: str = None, query: str = "What is Islam?", top_k: int = 3):
+        """Test topic-based filtering functionality."""
+        print(f"\n🧪 Testing topic filtering:")
+        print(f"  Topic: {topic_folder or 'All Topics'}")
+        print(f"  Query: {query}")
         
         query_vector = self.embedder.embed_query(query)
+        
+        # Build filter for topic
+        filter_dict = {}
+        if topic_folder and topic_folder != "all":
+            filter_dict["topic_folder"] = topic_folder
+        
         results = index.query(
             vector=query_vector,
             top_k=top_k,
-            include_metadata=True
+            include_metadata=True,
+            filter=filter_dict if filter_dict else None
         )
         
         print(f"📊 Query results: {len(results.matches)} matches found")
         for i, match in enumerate(results.matches):
-            # Restore rich metadata structure
-            restored_meta = self._restore_rich_metadata(match.metadata)
-            
+            meta = match.metadata
             print(f"\nMatch {i+1}:")
-            print(f"  Source: {restored_meta.get('source', 'Unknown')}")
-            print(f"  Category: {restored_meta.get('category', 'Unknown')}")
-            print(f"  Content Type: {restored_meta.get('content_type', 'Unknown')}")
+            print(f"  Topic: {meta.get('topic_name', 'Unknown')}")
+            print(f"  Source: {meta.get('source', 'Unknown')}")
+            print(f"  Source URL: {meta.get('source_url', 'Unknown')}")
+            print(f"  Category: {meta.get('category', 'Unknown')}")
             print(f"  Score: {match.score:.3f}")
-            
-            # Show some metadata fields
-            if 'breadcrumb' in restored_meta:
-                print(f"  Breadcrumb: {restored_meta['breadcrumb']}")
-            if 'priority' in restored_meta:
-                print(f"  Priority: {restored_meta['priority']}")
-            if 'subtopics' in restored_meta:
-                subtopics = restored_meta['subtopics']
-                if isinstance(subtopics, str):
-                    print(f"  Subtopics: {subtopics}")
-                else:
-                    print(f"  Subtopics: {', '.join(subtopics[:3])}...")
+            print(f"  Text: {meta.get('text', '')[:100]}...")
 
-def test_environment():
-    """Test if environment variables are loaded correctly."""
-    print("🔍 Testing Environment Variables...")
-    
-    # Check OpenAI API key
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        print(f"✅ OPENAI_API_KEY: {openai_key[:20]}...")
-    else:
-        print("❌ OPENAI_API_KEY: Not found")
-    
-    # Check Pinecone API key
-    pinecone_key = os.getenv("PINECONE_API_KEY")
-    if pinecone_key:
-        print(f"✅ PINECONE_API_KEY: {pinecone_key[:20]}...")
-    else:
-        print("❌ PINECONE_API_KEY: Not found")
-    
-    # Check Pinecone index name
-    index_name = os.getenv("PINECONE_INDEX_NAME", "islamic-knowledge-index")
-    print(f"✅ PINECONE_INDEX_NAME: {index_name}")
-    
-    # Check Pinecone cloud and region
-    cloud = os.getenv("PINECONE_CLOUD", "aws")
-    region = os.getenv("PINECONE_REGION", "us-east-1")
-    print(f"✅ PINECONE_CLOUD: {cloud}")
-    print(f"✅ PINECONE_REGION: {region}")
-    
-    print("-" * 50)
 
 def main():
-    """Test the enhanced embedding creator."""
+    """Test the topic-based embedding creator."""
     try:
-        # Test environment first
-        test_environment()
+        print("🚀 Starting Topic-Based Islamic Embedding Creator...")
+        creator = TopicBasedIslamicEmbeddingCreator()
         
-        print("🚀 Starting Enhanced Islamic Embedding Creator...")
-        creator = EnhancedIslamicEmbeddingCreator()
+        # Show available topics
+        print("\n📋 Available Topics:")
+        topics = creator.get_available_topics()
+        for i, topic in enumerate(topics, 1):
+            print(f"  {i}. {topic['display_name']} ({topic['folder_name']})")
         
         # Create index from data directory
+        print("\n🔨 Creating topic-based index...")
         index = creator.create_index_from_data_directory(
             data_directory="data_as_txt",
             progress_cb=lambda pct: print(f"Progress: {pct}%")
         )
         
-        print(f"✅ Successfully created index: {creator.index_name}")
+        print(f"✅ Successfully created topic-based index: {creator.index_name}")
         
-        # Test a simple query with metadata restoration
-        test_query = "What is the first surah of the Quran?"
-        creator.test_query_with_metadata_restoration(index, test_query)
+        # Test topic filtering
+        print("\n🧪 Testing topic-based filtering...")
+        
+        # Test with all topics
+        creator.test_topic_filtering(index, topic_folder=None, query="How to perform prayer?")
+        
+        # Test with specific topic
+        creator.test_topic_filtering(index, topic_folder="07_Namaz_Prayers", query="How to perform prayer?")
+        
+        # Test with another specific topic
+        creator.test_topic_filtering(index, topic_folder="04_Kitab_ul_Etiqadia", query="What is faith in Islam?")
             
     except ValueError as e:
         print(f"❌ Configuration Error: {e}")
         print("\n💡 Please check your .env file contains:")
         print("   - OPENAI_API_KEY")
         print("   - PINECONE_API_KEY")
-        print("   - PINECONE_INDEX_NAME (optional)")
-        print("   - PINECONE_CLOUD (optional, default: aws)")
-        print("   - PINECONE_REGION (optional, default: us-east-1)")
     except Exception as e:
         print(f"❌ Unexpected Error: {e}")
         import traceback
