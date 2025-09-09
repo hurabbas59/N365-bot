@@ -222,8 +222,18 @@ if 'topics_loaded' not in st.session_state:
     st.session_state['topics_loaded'] = False
 
 # Configuration
-# Prefer Streamlit Cloud secrets, then env var, then local default
-API_BASE_URL = st.secrets.get("API_BASE_URL", os.getenv("API_BASE_URL", "http://localhost:8002"))
+# Robustly read API_BASE_URL: env var first, then Streamlit secrets, else local default
+def _get_api_base_url() -> str:
+    env_url = os.getenv("API_BASE_URL")
+    if env_url:
+        return env_url
+    try:
+        # Accessing st.secrets may raise if no secrets.toml exists in local runs
+        return st.secrets["API_BASE_URL"]  # type: ignore[index]
+    except Exception:
+        return "http://localhost:8002"
+
+API_BASE_URL = _get_api_base_url()
 
 # Default topics as fallback (using original names)
 DEFAULT_TOPICS = [
